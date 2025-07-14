@@ -1,1 +1,179 @@
+#include <SoftwareSerial.h>
+#include <LiquidCrystal.h>
+#include <Servo.h>
+
+// ----------- Pin Definitions ----------
+#define VOLTAGE_SENSOR A0
+#define RELAY_PIN 8
+#define TRIG_PIN 9
+#define ECHO_PIN 12
+#define SERVO_PIN A1
+
+// ----------- Module Objects -----------
+SoftwareSerial BT(10, 11);  // RX, TX
+LiquidCrystal lcd(7, 6, 5, 4, 3, 2);
+Servo myServo;
+
+// ----------- Variables -----------
+String inputString = "";
+float voltage = 0;
+float power = 0;
+bool relayState = false;
+
+float minVoltage = 999;
+float maxVoltage = 0;
+int resumeAngle = 90;
+int menuPage = 0;
+unsigned long lastGestureTime = 0;
+unsigned long lastBTStatusSend = 0;
+unsigned long lastBTseen = 0;
+
+// ------------- Setup ---------------
+void setup() {
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  digitalWrite(RELAY_PIN, HIGH);  // Relay OFF by default
+
+  myServo.attach(SERVO_PIN);
+  myServo.write(resumeAngle);
+
+  Serial.begin(9600);
+  BT.begin(9600);
+  lcd.begin(16, 2);
+
+  // Cool Startup Animation
+  lcd.setCursor(0, 0);
+  lcd.print("Smart Energy");
+  for (int i = 0; i <= 15; i++) {
+    lcd.setCursor(i, 1);
+    lcd.print("-");
+    delay(80);
+  }
+  lcd.clear();
+  lcd.setCursor(2, 0);
+  lcd.print("System Ready!");
+  delay(1000);
+  lcd.clear();
+}
+
+// ------------- Main Loop ---------------
+void loop() {
+  // Bluetooth Command Handling
+  if (BT.available()) {
+    lastBTseen = millis();
+    char c = BT.read();
+    inputString += c;
+    if (c == '\n' || c == '\r') {
+      inputString.trim();
+      if (inputString == "1") {
+        digitalWrite(RELAY_PIN, LOW);
+        relayState = true;
+        BT.println("Relay ON");
+        myServo.write(0);
+      } else if (inputString == "0") {
+        digitalWrite(RELAY_PIN, HIGH);
+        relayState = false;
+        BT.println("Relay OFF");
+        myServo.write(90);
+      }
+      inputString = "";
+    }
+  }
+
+  // Gesture Detection (Ultrasonic)
+  float distance = getDistance();
+  if (distance > 0 && distance < 10 && (millis() - lastGestureTime > 1500)) {
+    relayState = !relayState;
+    digitalWrite(RELAY_PIN, relayState ? LOW : HIGH);
+    myServo.write(relayState ? 0 : 90);
+    lastGestureTime = millis();
+  }
+
+  // Voltage & Power Calculation
+  voltage = getVoltage();
+
+  if (voltage < 30) {
+    voltage = 0;
+    power = 0;
+  } else {
+    power = voltage * 0.09;  // Estimation for LED load
+  }
+
+  // Min/Max Tracking (Only if supply is ON)
+  if (voltage > 0) {
+    if (voltage < minVoltage) minVoltage = voltage;
+    if (voltage > maxVoltage) maxVoltage = voltage;
+  }
+
+  // LCD Menu Auto Slide
+  menuPage = (millis() / 4000) % 3;
+
+  lcd.setCursor(0, 0);
+  lcd.noBlink();
+  lcd.noCursor();
+
+  if (menuPage == 0) {
+    lcd.print("V:"); lcd.print(voltage, 1);
+    lcd.print(" P:"); lcd.print(power, 0);
+    lcd.print("W ");
+    lcd.setCursor(0, 1);
+    lcd.print("Relay: ");
+    lcd.print(relayState ? "ON " : "OFF");
+    lcd.print(" G:Yes");
+  }
+  else if (menuPage == 1) {
+    lcd.print("Min:"); lcd.print(minVoltage, 0);
+    lcd.print(" Max:"); lcd.print(maxVoltage, 0);
+    lcd.print(" ");
+    lcd.setCursor(0, 1);
+    lcd.print("BT: ");
+    lcd.print((millis() - lastBTseen < 5000) ? "Yes" : "No ");
+    lcd.print(" U:"); lcd.print((int)distance);
+    lcd.print(" ");
+  }
+  else if (menuPage == 2) {
+    lcd.print("Used (est.):    ");
+    lcd.setCursor(0, 1);
+    lcd.print(power, 0);
+    lcd.print("W Load Active ");
+  }
+
+  // Bluetooth Status Feedback
+  if (millis() - lastBTStatusSend > 3000) {
+    BT.print("Voltage: "); BT.print(voltage, 1);
+    BT.print("V | Power: "); BT.print(power, 0);
+    BT.print("W | Relay: "); BT.print(relayState ? "ON" : "OFF");
+    BT.println(" | Gesture: Yes");
+    lastBTStatusSend = millis();
+  }
+
+  delay(300);
+}
+
+// ---------- Helper Functions ----------
+float getVoltage() {
+  long sum = 0;
+  for (int i = 0; i < 100; i++) {
+    sum += analogRead(VOLTAGE_SENSOR);
+    delay(2);
+  }
+  float avg = sum / 100.0;
+  float sensorV = (avg * 5.0) / 1023.0;
+  float voltage = sensorV * 66.0;  // Adjust for your module
+
+  return voltage;
+}
+
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return -1;
+  return duration * 0.034 / 2.0;
+}
 
