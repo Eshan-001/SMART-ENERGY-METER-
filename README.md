@@ -51,11 +51,6 @@ Baud Rate: `9600`
 | `1`     | Relay ON       |
 | `0`     | Relay OFF      |
 
----
-
-## 📷 Screenshots
-
-![LCD Output](images/lcd_output_example.jpg)
 
 ---
 
